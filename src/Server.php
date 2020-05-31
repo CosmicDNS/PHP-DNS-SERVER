@@ -14,18 +14,18 @@ namespace yswery\DNS;
 use React\Datagram\Socket;
 use React\Datagram\SocketInterface;
 use React\EventLoop\LoopInterface;
-use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\EventDispatcher\Event;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use yswery\DNS\Config\FileConfig;
-use yswery\DNS\Event\ServerExceptionEvent;
+use yswery\DNS\Event\Events;
 use yswery\DNS\Event\MessageEvent;
 use yswery\DNS\Event\QueryReceiveEvent;
 use yswery\DNS\Event\QueryResponseEvent;
+use yswery\DNS\Event\ServerExceptionEvent;
 use yswery\DNS\Event\ServerStartEvent;
+use yswery\DNS\Filesystem\FilesystemManager;
 use yswery\DNS\Resolver\JsonFileSystemResolver;
 use yswery\DNS\Resolver\ResolverInterface;
-use yswery\DNS\Event\Events;
-use yswery\DNS\Filesystem\FilesystemManager;
 
 class Server
 {
@@ -39,27 +39,27 @@ class Server
     /**
      * @var EventDispatcherInterface
      */
-    private $dispatcher;
+    protected $dispatcher;
 
     /**
      * @var ResolverInterface
      */
-    private $resolver;
+    protected $resolver;
 
     /**
      * @var int
      */
-    private $port;
+    protected $port;
 
     /**
      * @var string
      */
-    private $ip;
+    protected $ip;
 
     /**
      * @var LoopInterface
      */
-    private $loop;
+    protected $loop;
 
     /**
      * @var FilesystemManager
@@ -155,7 +155,7 @@ class Server
     {
         try {
             $this->dispatch(Events::MESSAGE, new MessageEvent($socket, $address, $message));
-            $socket->send($this->handleQueryFromStream($message), $address);
+            $socket->send($this->handleQueryFromStream($message, $address), $address);
         } catch (\Exception $exception) {
             $this->dispatch(Events::SERVER_EXCEPTION, new ServerExceptionEvent($exception));
         }
@@ -170,7 +170,7 @@ class Server
      *
      * @throws UnsupportedTypeException
      */
-    public function handleQueryFromStream(string $buffer): string
+    public function handleQueryFromStream(string $buffer, ?string $client = null): string
     {
         $message = Decoder::decodeMessage($buffer);
         $this->dispatch(Events::QUERY_RECEIVE, new QueryReceiveEvent($message));
@@ -182,7 +182,7 @@ class Server
             ->setAuthoritative($this->isAuthoritative($message->getQuestions()));
 
         try {
-            $answers = $this->resolver->getAnswer($responseMessage->getQuestions());
+            $answers = $this->resolver->getAnswer($responseMessage->getQuestions(), $client);
             $responseMessage->setAnswers($answers);
             $this->needsAdditionalRecords($responseMessage);
             $this->dispatch(Events::QUERY_RESPONSE, new QueryResponseEvent($responseMessage));
@@ -190,8 +190,8 @@ class Server
             return Encoder::encodeMessage($responseMessage);
         } catch (UnsupportedTypeException $e) {
             $responseMessage
-                    ->setAnswers([])
-                    ->getHeader()->setRcode(Header::RCODE_NOT_IMPLEMENTED);
+                ->setAnswers([])
+                ->getHeader()->setRcode(Header::RCODE_NOT_IMPLEMENTED);
             $this->dispatch(Events::QUERY_RESPONSE, new QueryResponseEvent($responseMessage));
 
             return Encoder::encodeMessage($responseMessage);
@@ -235,7 +235,7 @@ class Server
      *
      * @param Message $message
      */
-    private function needsAdditionalRecords(Message $message): void
+    protected function needsAdditionalRecords(Message $message): void
     {
         foreach ($message->getAnswers() as $answer) {
             $name = null;
@@ -278,7 +278,7 @@ class Server
      *
      * @return bool
      */
-    private function isAuthoritative(array $query): bool
+    protected function isAuthoritative(array $query): bool
     {
         if (empty($query)) {
             return false;
@@ -298,7 +298,7 @@ class Server
      *
      * @return Event|null
      */
-    private function dispatch($eventName, ?Event $event = null): ?Event
+    protected function dispatch($eventName, ?Event $event = null): ?Event
     {
         if (null === $this->dispatcher) {
             return null;
